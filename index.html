@@ -166,7 +166,9 @@
         };
 
         const DiceRaceGame = () => {
-            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [isLoggedIn, setIsLoggedIn] = useState(() => {
+                return localStorage.getItem('dicerace_auth') === 'true';
+            });
             const [gameState, setGameState] = useState(null);
             const [playerName, setPlayerName] = useState('');
             const [hasJoined, setHasJoined] = useState(false);
@@ -174,6 +176,11 @@
             const [diceValue, setDiceValue] = useState(null);
             const [loading, setLoading] = useState(true);
             const WINNING_POSITION = 30;
+
+            const handleLoginSuccess = () => {
+                localStorage.setItem('dicerace_auth', 'true');
+                setIsLoggedIn(true);
+            };
 
             useEffect(() => {
                 if (isLoggedIn) {
@@ -199,7 +206,7 @@
             }, [isLoggedIn]);
 
             if (!isLoggedIn) {
-                return <LoginScreen onLoginSuccess={() => setIsLoggedIn(true)} />;
+                return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
             }
 
             const joinGame = () => {
