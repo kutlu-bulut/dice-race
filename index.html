@@ -15,7 +15,7 @@
     <div id="root"></div>
     
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useCallback } = React;
 
         // Login credentials
         const VALID_USERNAME = "Sheetstormrules";
@@ -34,7 +34,6 @@
 
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
-        const gameRef = database.ref('game');
 
         // Icons as SVG components
         const DicesIcon = () => (
@@ -166,10 +165,12 @@
         };
 
         const DiceRaceGame = () => {
+            const WINNING_POSITION = 30;
+            
             const [isLoggedIn, setIsLoggedIn] = useState(() => {
                 return localStorage.getItem('dicerace_auth') === 'true';
             });
-            const [gameMode, setGameMode] = useState(null); // 'host', 'join', or 'solo'
+            const [gameMode, setGameMode] = useState(null);
             const [gameCode, setGameCode] = useState('');
             const [inputGameCode, setInputGameCode] = useState('');
             const [gameState, setGameState] = useState(null);
@@ -178,7 +179,6 @@
             const [isRolling, setIsRolling] = useState(false);
             const [diceValue, setDiceValue] = useState(null);
             const [loading, setLoading] = useState(true);
-            const WINNING_POSITION = 30;
 
             const handleLoginSuccess = (username) => {
                 localStorage.setItem('dicerace_auth', 'true');
@@ -219,7 +219,6 @@
                 setGameMode('solo');
                 const code = 'SOLO-' + Date.now();
                 setGameCode(code);
-                // Auto-setup solo game with player and CPU
                 setTimeout(() => {
                     setLoading(false);
                 }, 100);
@@ -260,6 +259,101 @@
                     return () => gameRefPath.off('value', unsubscribe);
                 }
             }, [isLoggedIn, gameMode, gameCode]);
+
+            const rollDice = useCallback((diceType) => {
+                if (isRolling || !gameState || gameState.winner || !gameState.players || gameState.players.length === 0) return;
+                
+                const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+                if (!currentPlayer) return;
+                
+                if (!currentPlayer.isCPU && currentPlayer.name !== playerName) return;
+
+                setIsRolling(true);
+
+                let actualDiceType = diceType;
+                if (currentPlayer.isCPU) {
+                    const cpuPosition = currentPlayer.position;
+                    const humanPlayer = gameState.players.find(p => !p.isCPU);
+                    const humanPosition = humanPlayer ? humanPlayer.position : 0;
+                    const distanceToWin = WINNING_POSITION - cpuPosition;
+                    const behindBy = humanPosition - cpuPosition;
+                    
+                    if (distanceToWin <= 5) {
+                        actualDiceType = 'safe';
+                    } else if (behindBy > 8) {
+                        actualDiceType = 'risky';
+                    } else if (behindBy > 3) {
+                        actualDiceType = Math.random() < 0.6 ? 'risky' : 'normal';
+                    } else if (behindBy < -5) {
+                        actualDiceType = 'safe';
+                    } else {
+                        actualDiceType = 'normal';
+                    }
+                }
+
+                let rolls = 0;
+                const rollInterval = setInterval(() => {
+                    let randomValue;
+                    if (actualDiceType === 'safe') {
+                        randomValue = Math.random() < 0.5 ? 3 : 4;
+                    } else if (actualDiceType === 'risky') {
+                        const riskyOptions = [1, 2, 6];
+                        randomValue = riskyOptions[Math.floor(Math.random() * 3)];
+                    } else {
+                        randomValue = Math.floor(Math.random() * 6) + 1;
+                    }
+                    setDiceValue(randomValue);
+                    rolls++;
+                    
+                    if (rolls > 10) {
+                        clearInterval(rollInterval);
+                        let finalValue;
+                        if (actualDiceType === 'safe') {
+                            finalValue = Math.random() < 0.5 ? 3 : 4;
+                        } else if (actualDiceType === 'risky') {
+                            const riskyOptions = [1, 2, 6];
+                            finalValue = riskyOptions[Math.floor(Math.random() * 3)];
+                        } else {
+                            finalValue = Math.floor(Math.random() * 6) + 1;
+                        }
+                        setDiceValue(finalValue);
+                        
+                        setTimeout(() => {
+                            const newPlayers = [...gameState.players];
+                            newPlayers[gameState.currentPlayerIndex].position += finalValue;
+                            
+                            let newWinner = null;
+                            if (newPlayers[gameState.currentPlayerIndex].position >= WINNING_POSITION) {
+                                newPlayers[gameState.currentPlayerIndex].position = WINNING_POSITION;
+                                newWinner = newPlayers[gameState.currentPlayerIndex].name;
+                            }
+                            
+                            const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                            gameRefPath.update({
+                                players: newPlayers,
+                                winner: newWinner,
+                                currentPlayerIndex: newWinner ? gameState.currentPlayerIndex : (gameState.currentPlayerIndex + 1) % gameState.players.length
+                            }).catch(err => console.error('Error updating game:', err));
+                            
+                            setIsRolling(false);
+                        }, 500);
+                    }
+                }, 100);
+            }, [isRolling, gameState, playerName, gameMode, gameCode, WINNING_POSITION]);
+
+            useEffect(() => {
+                if (!gameState || !gameState.gameStarted || gameState.winner || isRolling) return;
+                if (!gameState.players || gameState.players.length === 0) return;
+                
+                const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+                if (!currentPlayer || !currentPlayer.isCPU) return;
+
+                const timer = setTimeout(() => {
+                    rollDice('normal');
+                }, 1500);
+
+                return () => clearTimeout(timer);
+            }, [gameState, isRolling, rollDice]);
 
             if (!isLoggedIn) {
                 return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
@@ -351,7 +445,6 @@
                     if (!existingPlayer) {
                         let newPlayers = [...gameState.players, { name: playerName.trim(), position: 0, isCPU: false }];
                         
-                        // If solo mode, add CPU player
                         if (gameMode === 'solo' && newPlayers.length === 1) {
                             newPlayers.push({ name: 'CPU', position: 0, isCPU: true });
                         }
@@ -372,95 +465,6 @@
                         currentPlayerIndex: 0
                     }).catch(err => console.error('Error starting game:', err));
                 }
-            };
-
-            const rollDice = (diceType) => {
-                if (isRolling || !gameState || gameState.winner || !gameState.players || gameState.players.length === 0) return;
-                
-                const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-                if (!currentPlayer) return;
-                
-                // Check if it's this player's turn
-                if (!currentPlayer.isCPU && currentPlayer.name !== playerName) return;
-
-                setIsRolling(true);
-
-                // CPU logic: assess the situation and choose dice type
-                let actualDiceType = diceType;
-                if (currentPlayer.isCPU) {
-                    const cpuPosition = currentPlayer.position;
-                    const humanPlayer = gameState.players.find(p => !p.isCPU);
-                    const humanPosition = humanPlayer ? humanPlayer.position : 0;
-                    const distanceToWin = WINNING_POSITION - cpuPosition;
-                    const behindBy = humanPosition - cpuPosition;
-                    
-                    // CPU decision logic
-                    if (distanceToWin <= 5) {
-                        // Close to winning - play it safe
-                        actualDiceType = 'safe';
-                    } else if (behindBy > 8) {
-                        // Far behind - take risks
-                        actualDiceType = 'risky';
-                    } else if (behindBy > 3) {
-                        // Somewhat behind - go risky sometimes
-                        actualDiceType = Math.random() < 0.6 ? 'risky' : 'normal';
-                    } else if (behindBy < -5) {
-                        // Far ahead - play safe
-                        actualDiceType = 'safe';
-                    } else {
-                        // Close race - balanced approach
-                        actualDiceType = 'normal';
-                    }
-                }
-
-                let rolls = 0;
-                const rollInterval = setInterval(() => {
-                    let randomValue;
-                    if (actualDiceType === 'safe') {
-                        randomValue = Math.random() < 0.5 ? 3 : 4;
-                    } else if (actualDiceType === 'risky') {
-                        const riskyOptions = [1, 2, 6];
-                        randomValue = riskyOptions[Math.floor(Math.random() * 3)];
-                    } else {
-                        randomValue = Math.floor(Math.random() * 6) + 1;
-                    }
-                    setDiceValue(randomValue);
-                    rolls++;
-                    
-                    if (rolls > 10) {
-                        clearInterval(rollInterval);
-                        let finalValue;
-                        if (actualDiceType === 'safe') {
-                            finalValue = Math.random() < 0.5 ? 3 : 4;
-                        } else if (actualDiceType === 'risky') {
-                            const riskyOptions = [1, 2, 6];
-                            finalValue = riskyOptions[Math.floor(Math.random() * 3)];
-                        } else {
-                            finalValue = Math.floor(Math.random() * 6) + 1;
-                        }
-                        setDiceValue(finalValue);
-                        
-                        setTimeout(() => {
-                            const newPlayers = [...gameState.players];
-                            newPlayers[gameState.currentPlayerIndex].position += finalValue;
-                            
-                            let newWinner = null;
-                            if (newPlayers[gameState.currentPlayerIndex].position >= WINNING_POSITION) {
-                                newPlayers[gameState.currentPlayerIndex].position = WINNING_POSITION;
-                                newWinner = newPlayers[gameState.currentPlayerIndex].name;
-                            }
-                            
-                            const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
-                            gameRefPath.update({
-                                players: newPlayers,
-                                winner: newWinner,
-                                currentPlayerIndex: newWinner ? gameState.currentPlayerIndex : (gameState.currentPlayerIndex + 1) % gameState.players.length
-                            }).catch(err => console.error('Error updating game:', err));
-                            
-                            setIsRolling(false);
-                        }, 500);
-                    }
-                }, 100);
             };
 
             const resetGame = () => {
@@ -489,22 +493,7 @@
                     setDiceValue(null);
                 }
             };
-// Add this right after the restartRace function and before the "if (loading)" check
 
-// Auto-roll for CPU with proper dependencies
-useEffect(() => {
-    if (!gameState || !gameState.gameStarted || gameState.winner || isRolling) return;
-    if (!gameState.players || gameState.players.length === 0) return;
-    
-    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-    if (!currentPlayer || !currentPlayer.isCPU) return;
-
-    const timer = setTimeout(() => {
-        rollDice('normal'); // Type doesn't matter, CPU will decide
-    }, 1500);
-
-    return () => clearTimeout(timer);
-}, [gameState?.currentPlayerIndex, gameState?.gameStarted, gameState?.winner, isRolling, gameState?.players?.length]);
             if (loading) {
                 return (
                     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
@@ -596,7 +585,7 @@ useEffect(() => {
                                         {gameState.players.map((player, idx) => (
                                             <div key={idx} className="bg-white px-4 py-2 rounded-lg shadow-sm flex items-center gap-2">
                                                 <UsersIcon />
-                                                <span className="font-medium">{player.name}</span>
+                                                <span className="font-medium">{player.name} {player.isCPU ? '🤖' : ''}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -606,10 +595,10 @@ useEffect(() => {
                             {hasJoined && !gameState.gameStarted && (
                                 <button
                                     onClick={startGame}
-                                    disabled={!gameState.players || (gameMode === 'solo' ? gameState.players.length < 1 : gameState.players.length < 2)}
+                                    disabled={!gameState.players || (gameMode === 'solo' ? gameState.players.length < 2 : gameState.players.length < 2)}
                                     className="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-lg font-bold text-lg hover:from-blue-600 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {!gameState.players || (gameMode === 'solo' ? gameState.players.length < 1 : gameState.players.length < 2) 
+                                    {!gameState.players || gameState.players.length < 2
                                         ? (gameMode === 'solo' ? 'Enter your name to start' : 'Need at least 2 players') 
                                         : 'Start Race!'}
                                 </button>
