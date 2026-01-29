@@ -169,6 +169,9 @@
             const [isLoggedIn, setIsLoggedIn] = useState(() => {
                 return localStorage.getItem('dicerace_auth') === 'true';
             });
+            const [gameMode, setGameMode] = useState(null); // 'host', 'join', or 'solo'
+            const [gameCode, setGameCode] = useState('');
+            const [inputGameCode, setInputGameCode] = useState('');
             const [gameState, setGameState] = useState(null);
             const [playerName, setPlayerName] = useState('');
             const [hasJoined, setHasJoined] = useState(false);
@@ -189,13 +192,39 @@
                 setIsLoggedIn(false);
                 setHasJoined(false);
                 setPlayerName('');
+                setGameMode(null);
+                setGameCode('');
             };
 
             const loggedInUsername = localStorage.getItem('dicerace_username');
 
+            const generateGameCode = () => {
+                return 'GAME-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+            };
+
+            const hostGame = () => {
+                const code = generateGameCode();
+                setGameCode(code);
+                setGameMode('host');
+            };
+
+            const joinGameWithCode = () => {
+                if (inputGameCode.trim()) {
+                    setGameCode(inputGameCode.trim().toUpperCase());
+                    setGameMode('join');
+                }
+            };
+
+            const startSoloGame = () => {
+                setGameMode('solo');
+                setGameCode('SOLO-' + Date.now());
+            };
+
             useEffect(() => {
-                if (isLoggedIn) {
-                    const unsubscribe = gameRef.on('value', (snapshot) => {
+                if (isLoggedIn && gameMode && gameCode) {
+                    const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                    
+                    const unsubscribe = gameRefPath.on('value', (snapshot) => {
                         const data = snapshot.val();
                         if (data && data.players && Array.isArray(data.players)) {
                             setGameState(data);
@@ -206,18 +235,98 @@
                                 gameStarted: false,
                                 winner: null
                             };
-                            gameRef.set(initialState).catch(err => console.error('Error setting initial state:', err));
+                            gameRefPath.set(initialState).catch(err => console.error('Error setting initial state:', err));
                             setGameState(initialState);
                         }
                         setLoading(false);
                     });
 
-                    return () => gameRef.off('value', unsubscribe);
+                    return () => gameRefPath.off('value', unsubscribe);
                 }
-            }, [isLoggedIn]);
+            }, [isLoggedIn, gameMode, gameCode]);
 
             if (!isLoggedIn) {
                 return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+            }
+
+            if (!gameMode) {
+                return (
+                    <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-8 flex items-center justify-center">
+                        <div className="absolute top-4 right-4 flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-lg">
+                            <span className="text-white/80 text-sm">{loggedInUsername}</span>
+                            <button
+                                onClick={handleLogout}
+                                className="text-white/60 hover:text-white text-xs underline"
+                            >
+                                Sign out
+                            </button>
+                        </div>
+                        
+                        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
+                            <div className="text-center mb-8">
+                                <div className="flex justify-center mb-4 text-purple-600">
+                                    <DicesIcon />
+                                </div>
+                                <h1 className="text-3xl font-bold text-gray-800 mb-2">Dice Race</h1>
+                                <p className="text-gray-600">Choose your game mode</p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <button
+                                    onClick={hostGame}
+                                    className="w-full p-4 bg-gradient-to-r from-blue-500 to-purple-600 text-white rounded-xl font-bold text-lg hover:from-blue-600 hover:to-purple-700 transition-all"
+                                >
+                                    🎮 Host Game
+                                    <p className="text-sm font-normal opacity-90 mt-1">Create a game and share the code</p>
+                                </button>
+
+                                <div className="relative">
+                                    <div className="absolute inset-0 flex items-center">
+                                        <div className="w-full border-t border-gray-300"></div>
+                                    </div>
+                                    <div className="relative flex justify-center text-sm">
+                                        <span className="px-2 bg-white text-gray-500">or</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <input
+                                        type="text"
+                                        value={inputGameCode}
+                                        onChange={(e) => setInputGameCode(e.target.value.toUpperCase())}
+                                        onKeyPress={(e) => e.key === 'Enter' && joinGameWithCode()}
+                                        placeholder="Enter game code"
+                                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none mb-2 text-center font-mono"
+                                    />
+                                    <button
+                                        onClick={joinGameWithCode}
+                                        disabled={!inputGameCode.trim()}
+                                        className="w-full p-4 bg-green-500 text-white rounded-xl font-bold text-lg hover:bg-green-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        🤝 Join Game
+                                    </button>
+                                </div>
+
+                                <div className="relative">
+                                    <div className="absolute inset-0 flex items-center">
+                                        <div className="w-full border-t border-gray-300"></div>
+                                    </div>
+                                    <div className="relative flex justify-center text-sm">
+                                        <span className="px-2 bg-white text-gray-500">or</span>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={startSoloGame}
+                                    className="w-full p-4 bg-gray-600 text-white rounded-xl font-bold text-lg hover:bg-gray-700 transition-all"
+                                >
+                                    🤖 Play Solo
+                                    <p className="text-sm font-normal opacity-90 mt-1">Practice against CPU</p>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
             }
 
             const joinGame = () => {
@@ -225,7 +334,8 @@
                     const existingPlayer = gameState.players.find(p => p.name === playerName.trim());
                     if (!existingPlayer) {
                         const newPlayers = [...gameState.players, { name: playerName.trim(), position: 0 }];
-                        gameRef.update({ players: newPlayers }).catch(err => console.error('Error joining game:', err));
+                        const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                        gameRefPath.update({ players: newPlayers }).catch(err => console.error('Error joining game:', err));
                     }
                     setHasJoined(true);
                 }
@@ -233,7 +343,8 @@
 
             const startGame = () => {
                 if (gameState && gameState.players.length >= 2) {
-                    gameRef.update({
+                    const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                    gameRefPath.update({
                         gameStarted: true,
                         currentPlayerIndex: 0
                     }).catch(err => console.error('Error starting game:', err));
@@ -285,7 +396,8 @@
                                 newWinner = newPlayers[gameState.currentPlayerIndex].name;
                             }
                             
-                            gameRef.update({
+                            const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                            gameRefPath.update({
                                 players: newPlayers,
                                 winner: newWinner,
                                 currentPlayerIndex: newWinner ? gameState.currentPlayerIndex : (gameState.currentPlayerIndex + 1) % gameState.players.length
@@ -304,7 +416,8 @@
                     gameStarted: false,
                     winner: null
                 };
-                gameRef.set(newState).catch(err => console.error('Error resetting game:', err));
+                const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                gameRefPath.set(newState).catch(err => console.error('Error resetting game:', err));
                 setHasJoined(false);
                 setPlayerName('');
                 setDiceValue(null);
@@ -313,7 +426,8 @@
             const restartRace = () => {
                 if (gameState && gameState.players) {
                     const resetPlayers = gameState.players.map(p => ({ ...p, position: 0 }));
-                    gameRef.update({
+                    const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                    gameRefPath.update({
                         players: resetPlayers,
                         currentPlayerIndex: 0,
                         winner: null
@@ -341,6 +455,16 @@
             if (!hasJoined || !gameState.gameStarted) {
                 return (
                     <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-8 flex items-center justify-center">
+                        <div className="absolute top-4 right-4 flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-lg">
+                            <span className="text-white/80 text-sm">{loggedInUsername}</span>
+                            <button
+                                onClick={handleLogout}
+                                className="text-white/60 hover:text-white text-xs underline"
+                            >
+                                Sign out
+                            </button>
+                        </div>
+
                         <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
                             <div className="flex justify-between items-start mb-6">
                                 <div className="flex-1">
@@ -350,21 +474,19 @@
                                         </div>
                                         <h1 className="text-3xl font-bold text-gray-800 mb-2">Dice Race</h1>
                                         <p className="text-gray-600">Multiplayer icebreaker game</p>
+                                        {gameMode === 'host' && (
+                                            <div className="mt-4 p-3 bg-blue-50 border-2 border-blue-300 rounded-lg">
+                                                <p className="text-sm text-gray-600 mb-1">Share this code with players:</p>
+                                                <p className="text-2xl font-bold text-blue-600 font-mono">{gameCode}</p>
+                                            </div>
+                                        )}
+                                        {gameMode === 'join' && (
+                                            <div className="mt-4 p-3 bg-green-50 border border-green-300 rounded-lg">
+                                                <p className="text-sm text-gray-600">Game code: <span className="font-mono font-bold">{gameCode}</span></p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                            </div>
-
-                            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex justify-between items-center">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-green-700">🔓 Logged in as:</span>
-                                    <span className="font-semibold text-green-800">{loggedInUsername}</span>
-                                </div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600"
-                                >
-                                    Sign Out
-                                </button>
                             </div>
 
                             {!hasJoined ? (
@@ -429,12 +551,25 @@
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-4 md:p-8">
+                    <div className="absolute top-4 right-4 flex items-center gap-3 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-lg">
+                        <span className="text-white/80 text-sm">{loggedInUsername}</span>
+                        <button
+                            onClick={handleLogout}
+                            className="text-white/60 hover:text-white text-xs underline"
+                        >
+                            Sign out
+                        </button>
+                    </div>
+
                     <div className="max-w-6xl mx-auto">
                         <div className="bg-white rounded-2xl shadow-2xl p-4 md:p-8">
                             <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                                 <div>
                                     <h1 className="text-2xl md:text-3xl font-bold text-gray-800">Dice Race</h1>
                                     <p className="text-sm text-gray-600">Playing as: {playerName}</p>
+                                    {gameMode === 'host' && (
+                                        <p className="text-xs text-gray-500">Game code: <span className="font-mono font-bold">{gameCode}</span></p>
+                                    )}
                                 </div>
                                 <div className="flex gap-2">
                                     <button
@@ -451,19 +586,6 @@
                                         New Game
                                     </button>
                                 </div>
-                            </div>
-
-                            <div className="mb-6 p-2 bg-green-50 border border-green-200 rounded-lg flex justify-between items-center text-sm">
-                                <div className="flex items-center gap-2">
-                                    <span className="text-green-700">🔓 Logged in as:</span>
-                                    <span className="font-semibold text-green-800">{loggedInUsername}</span>
-                                </div>
-                                <button
-                                    onClick={handleLogout}
-                                    className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600"
-                                >
-                                    Sign Out
-                                </button>
                             </div>
 
                             {gameState.winner && (
