@@ -241,23 +241,30 @@
 
             // Timer countdown and auto-end round
             useEffect(() => {
-                if (gameState && gameState.roundActive && gameState.roundEndTime) {
-                    const interval = setInterval(() => {
-                        const now = Date.now();
-                        const remaining = Math.max(0, Math.ceil((gameState.roundEndTime - now) / 1000));
-                        setTimeLeft(remaining);
-                        
-                        // Auto-end round when timer reaches 0 or everyone has rolled
-                        const allPlayersRolled = gameState.players.every(p => p.hasRolledThisRound);
-                        if ((remaining <= 0 || allPlayersRolled) && gameState.roundActive) {
-                            const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
-                            gameRefPath.update({ roundActive: false });
-                        }
-                    }, 100);
+                if (!gameState || !gameState.roundActive || !gameState.roundEndTime) return;
+                
+                const interval = setInterval(() => {
+                    const now = Date.now();
+                    const remaining = Math.max(0, Math.ceil((gameState.roundEndTime - now) / 1000));
+                    setTimeLeft(remaining);
+                }, 100);
 
-                    return () => clearInterval(interval);
+                return () => clearInterval(interval);
+            }, [gameState?.roundActive, gameState?.roundEndTime]);
+
+            // Separate effect to check if round should end
+            useEffect(() => {
+                if (!gameState || !gameState.roundActive || !gameState.players) return;
+                
+                const allPlayersRolled = gameState.players.every(p => p.hasRolledThisRound);
+                const now = Date.now();
+                const timeExpired = gameState.roundEndTime && now >= gameState.roundEndTime;
+                
+                if ((allPlayersRolled || timeExpired) && gameState.roundActive && isHost) {
+                    const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
+                    gameRefPath.update({ roundActive: false });
                 }
-            }, [gameState, gameMode, gameCode]);
+            }, [gameState?.players, gameState?.roundActive, gameState?.roundEndTime, isHost, gameMode, gameCode]);
 
             useEffect(() => {
                 if (isLoggedIn && gameMode && gameCode) {
@@ -719,8 +726,8 @@
                 );
             }
 
-            const isHost = gameState.hostName === playerName;
-            const myPlayer = gameState.players.find(p => p.name === playerName);
+            const isHost = gameState?.hostName === playerName;
+            const myPlayer = gameState?.players?.find(p => p.name === playerName);
             const hasRolled = myPlayer?.hasRolledThisRound;
 
             return (
