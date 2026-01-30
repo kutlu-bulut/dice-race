@@ -232,6 +232,7 @@
                 setLoading(true);
             };
 
+            // CPU auto-roll for solo mode
             useEffect(() => {
                 if (isLoggedIn && gameMode && gameCode) {
                     const gameRefPath = gameMode === 'solo' ? database.ref(`game-solo/${gameCode}`) : database.ref(`game-multi/${gameCode}`);
@@ -261,8 +262,19 @@
 
             const isHost = gameState?.hostName === playerName;
 
-            // CPU auto-roll for solo mode
+            // Auto-start next round when all players have rolled (host only)
             useEffect(() => {
+                if (!gameState || !gameState.waitingForRolls || !isHost) return;
+                
+                const allPlayersRolled = gameState.players?.every(p => p.hasRolledThisRound);
+                if (allPlayersRolled) {
+                    const timer = setTimeout(() => {
+                        startNextRound();
+                    }, 2000); // 2 second delay to show all rolls
+                    
+                    return () => clearTimeout(timer);
+                }
+            }, [gameState?.players, gameState?.waitingForRolls, isHost]);
                 if (!gameState || !gameState.waitingForRolls || gameMode !== 'solo') return;
                 
                 const cpuPlayer = gameState.players?.find(p => p.isCPU);
@@ -725,20 +737,9 @@
                                 </div>
                             </div>
 
-                            {gameState.waitingForRolls && allPlayersRolled && isHost && (
-                                <div className="mb-6 text-center">
-                                    <button
-                                        onClick={startNextRound}
-                                        className="px-8 py-4 bg-gradient-to-r from-green-500 to-blue-500 text-white rounded-xl font-bold text-xl hover:from-green-600 hover:to-blue-600"
-                                    >
-                                        Start Next Round
-                                    </button>
-                                </div>
-                            )}
-
-                            {gameState.waitingForRolls && allPlayersRolled && !isHost && (
+                            {gameState.waitingForRolls && allPlayersRolled && (
                                 <div className="mb-6 p-4 bg-green-100 rounded-xl text-center text-green-700 font-semibold">
-                                    ✓ Everyone has rolled! Waiting for host to continue...
+                                    ✓ Everyone has rolled! Starting next round in a moment...
                                 </div>
                             )}
 
@@ -787,6 +788,16 @@
                                                 >
                                                     <span className="text-2xl">🏃</span>
                                                 </div>
+                                                {player.position > 0 && (
+                                                    <div 
+                                                        className="absolute h-full flex items-center justify-center transition-all duration-500"
+                                                        style={{ left: `${Math.min(progress, 95)}%`, top: '-28px' }}
+                                                    >
+                                                        <span className="text-xs font-bold text-gray-700 bg-white px-2 py-1 rounded shadow">
+                                                            {player.position}
+                                                        </span>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     );
